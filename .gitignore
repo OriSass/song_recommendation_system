@@ -3,13 +3,14 @@
 *.csv
 *.json
 million_playlist_dataset/
-
+audio_features_dataset/
 
 # Python caches and environments
 __pycache__/
 .venv/
 venv/
 .idea/
+ex/
 
 # general
 past_projects
