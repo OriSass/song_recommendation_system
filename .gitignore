@@ -1,0 +1,16 @@
+# Databases and raw data
+*.db*
+*.csv
+*.json
+million_playlist_dataset/
+
+
+# Python caches and environments
+__pycache__/
+.venv/
+venv/
+.idea/
+
+# general
+past_projects
+projNeedle26.pdf
