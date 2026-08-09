@@ -1,6 +1,7 @@
 import sqlite3
 import pandas as pd
 import numpy as np
+import os
 
 
 class HybridRecommender:
@@ -19,6 +20,13 @@ class HybridRecommender:
         Args:
             db_path (str): The relative or absolute path to the SQLite database file.
         """
+        # Get the exact directory where HybridRecommender.py lives
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+
+        # If the provided db_path is just a file name (relative), make it absolute
+        if not os.path.isabs(db_path):
+            db_path = os.path.join(base_dir, db_path)
+
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
 
     def get_track_info(self, track_id):
@@ -272,7 +280,7 @@ class HybridRecommender:
             return self.get_popularity_baseline(limit=top_n)
 
         # Sort the global pool. Request top_n * 3 to create a buffer for deduplication.
-        sorted_tracks = sorted(scores_map.items(), key=lambda x: x[1], reverse=True)[:top_n * 3]
+        sorted_tracks = sorted(scores_map.items(), key=lambda x: x[1], reverse=True)[:top_n * 20]
 
         if not sorted_tracks:
             return pd.DataFrame(columns=['track_id', 'hybrid_score', 'track_name', 'artists', 'all_genres'])
@@ -301,6 +309,18 @@ class HybridRecommender:
 
         # Deduplication: Remove different track_ids that share the exact same title and artist (e.g. Single vs Album edits)
         final_df = final_df.drop_duplicates(subset=['track_name', 'artists'], keep='first')
+        # Drop any tracks that were used as seed songs
+        final_df = final_df[~final_df['track_id'].isin(seed_track_ids)]
+
+        # --- NEW: PHANTOM DUPLICATE FILTER ---
+        # Query the database to get the exact track names of the seed IDs
+        seed_placeholders = ','.join(['?'] * len(seed_track_ids))
+        seed_names_query = f"SELECT DISTINCT track_name FROM kaggle_audio_features WHERE track_id IN ({seed_placeholders})"
+        seed_names_df = pd.read_sql_query(seed_names_query, self.conn, params=seed_track_ids)
+        seed_names_list = seed_names_df['track_name'].tolist()
+
+        # Drop any recommendations where the track_name matches a seed song name
+        final_df = final_df[~final_df['track_name'].isin(seed_names_list)]
 
         # Trim down to the strict requested length
         return final_df.sort_values(by='hybrid_score', ascending=False).head(top_n)
