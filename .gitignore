@@ -15,3 +15,7 @@ ex/
 # general
 past_projects
 projNeedle26.pdf
+
+# debugging
+add_indexes.py
+diagnostic.py
