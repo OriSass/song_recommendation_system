@@ -4,18 +4,49 @@ import numpy as np
 
 
 class HybridRecommender:
+    """
+    A music recommendation engine utilizing a hybrid accumulator strategy.
+    Synthesizes Content-Based Filtering (audio features), Metadata Graphing (artists),
+    and Collaborative Filtering (playlist co-occurrence) across multiple SQLite datasets.
+    """
 
     def __init__(self, db_path='spotify_recommender.db'):
-        """Initialize the database connection."""
-        self.conn = sqlite3.connect(db_path)
+        """
+        Initializes the database connection.
+        Note: check_same_thread=False is added to safely support multi-threaded
+        frameworks like Streamlit.
+
+        Args:
+            db_path (str): The relative or absolute path to the SQLite database file.
+        """
+        self.conn = sqlite3.connect(db_path, check_same_thread=False)
 
     def get_track_info(self, track_id):
-        """Helper function to get the name and artist of a track ID."""
+        """
+        Retrieves standard metadata (name and artist) for a specific track ID.
+
+        Args:
+            track_id (str): The unique Spotify/Kaggle track identifier.
+
+        Returns:
+            pd.DataFrame: A single-row DataFrame containing track_id, track_name, and artists.
+        """
         query = "SELECT track_id, track_name, artists FROM kaggle_audio_features WHERE track_id = ?"
         return pd.read_sql_query(query, self.conn, params=(track_id,))
 
     def layer_1_audio_features(self, seed_track_id, limit=10):
-        """Layer 1: Content-Based Filtering (Euclidean distance on audio features)."""
+        """
+        Layer 1: Content-Based Filtering.
+        Calculates the Euclidean distance between the numeric audio features of the seed song
+        and all other songs in the database.
+
+        Args:
+            seed_track_id (str): The target track ID to compare against.
+            limit (int): The maximum number of candidate tracks to return.
+
+        Returns:
+            pd.DataFrame: A DataFrame of candidate track_ids and their normalized distance scores.
+        """
         seed_query = """
         SELECT danceability, energy, key, loudness, mode, speechiness, 
                acousticness, instrumentalness, liveness, valence, tempo
@@ -26,6 +57,7 @@ class HybridRecommender:
         if seed_df.empty:
             return pd.DataFrame(columns=['track_id', 'score'])
 
+        # Extract numerical features for the seed track
         seed_features = seed_df.iloc[0].values.astype(float)
 
         all_query = """
@@ -41,16 +73,28 @@ class HybridRecommender:
         feature_cols = ['danceability', 'energy', 'key', 'loudness', 'mode', 'speechiness',
                         'acousticness', 'instrumentalness', 'liveness', 'valence', 'tempo']
 
+        # Vectorized Euclidean distance calculation using NumPy
         feature_matrix = tracks_df[feature_cols].values.astype(float)
-
         distances = np.linalg.norm(feature_matrix - seed_features, axis=1)
+
+        # Convert distances to similarity scores (closer distance = higher score)
         scores = 1 / (1 + distances)
 
         tracks_df['score'] = scores
         return tracks_df[['track_id', 'score']].sort_values(by='score', ascending=False).head(limit)
 
     def layer_2_artist_connections(self, seed_track_id, limit=10):
-        """Layer 2: Graph/Metadata Connections (Exact artist matches)."""
+        """
+        Layer 2: Metadata Filtering.
+        Finds other tracks created by the exact same artist.
+
+        Args:
+            seed_track_id (str): The target track ID.
+            limit (int): The maximum number of candidate tracks to return.
+
+        Returns:
+            pd.DataFrame: A DataFrame of candidate track_ids with a binary score of 1.0.
+        """
         seed_info = self.get_track_info(seed_track_id)
         if seed_info.empty:
             return pd.DataFrame(columns=['track_id', 'score'])
@@ -66,7 +110,18 @@ class HybridRecommender:
         return pd.read_sql_query(query, self.conn, params=(artist_name, seed_track_id, limit))
 
     def layer_3_shared_playlists(self, seed_track_id, limit=10):
-        """Layer 3: Collaborative Filtering (Playlist co-occurrence)."""
+        """
+        Layer 3: Collaborative Filtering.
+        Utilizes a self-join on the playlists table to count how many times
+        other tracks co-occur in the same playlists as the seed track.
+
+        Args:
+            seed_track_id (str): The target track ID.
+            limit (int): The maximum number of candidate tracks to return.
+
+        Returns:
+            pd.DataFrame: A DataFrame of candidate track_ids and their co-occurrence counts.
+        """
         query = """
         SELECT 
             p2.track_uri as track_id, 
@@ -82,8 +137,16 @@ class HybridRecommender:
 
     def hybrid_recommend(self, seed_track_ids, top_n=10):
         """
-        Combines layers using dynamic weighting. Handles edge cases where
-        a track might only exist in one of the two datasets.
+        Executes the Accumulator Strategy. Loops through an array of seed tracks,
+        calculates candidates independently across all 3 layers, and blends them
+        into a unified scoring pool using dynamic weights to handle missing dataset entries.
+
+        Args:
+            seed_track_ids (list): A list of input track IDs to base recommendations on.
+            top_n (int): The final number of unique recommendations to return.
+
+        Returns:
+            pd.DataFrame: The final sorted recommendations with full track metadata.
         """
         if isinstance(seed_track_ids, str):
             seed_track_ids = [seed_track_ids]
@@ -92,39 +155,41 @@ class HybridRecommender:
         valid_seeds_processed = 0
 
         def accumulate(df, weight):
+            """Helper function to incrementally add weighted scores to the global pool."""
             if df is not None and not df.empty:
                 for _, row in df.iterrows():
                     tid = row['track_id']
+                    # Prevent recommending the seed songs back to the user
                     if tid in seed_track_ids:
                         continue
                     sc = row['score']
                     scores_map[tid] = scores_map.get(tid, 0.0) + (sc * weight)
 
-        # Process each song independently
+        # Iterate through each user-provided seed song
         for seed_id in seed_track_ids:
             l1 = self.layer_1_audio_features(seed_id, limit=50)
             l2 = self.layer_2_artist_connections(seed_id, limit=50)
             l3 = self.layer_3_shared_playlists(seed_id, limit=50)
 
-            # EDGE CASE 1: Song is a complete ghost (missing from both datasets)
+            # Edge Case 1: Track does not exist in any dataset
             if l1.empty and l3.empty:
                 continue
 
             valid_seeds_processed += 1
 
-            # DYNAMIC WEIGHTING ALGORITHM
+            # Dynamic Weighting Algorithm: Balances the formula if data is missing
             w1_dyn, w2_dyn, w3_dyn = 0.3, 0.3, 0.4
 
             if l1.empty:
-                # Missing from Kaggle: Shift all weight to Alcrowd Collaborative Filtering
+                # Track is missing from Kaggle; rely entirely on Alcrowd playlists
                 w1_dyn, w2_dyn = 0.0, 0.0
                 w3_dyn = 1.0
             elif l3.empty:
-                # Missing from Alcrowd: Shift weight to Kaggle Audio/Artist data
+                # Track is missing from Alcrowd; rely entirely on Kaggle audio/metadata
                 w3_dyn = 0.0
                 w1_dyn, w2_dyn = 0.5, 0.5
 
-            # Normalize scores within each layer to a 0-1 scale
+            # Min-Max Scaling: Normalize layer scores to a 0.0 - 1.0 scale before applying weights
             for df in [l1, l2, l3]:
                 if not df.empty and df['score'].max() > 0:
                     df['score'] = df['score'] / df['score'].max()
@@ -133,11 +198,11 @@ class HybridRecommender:
             accumulate(l2, w2_dyn)
             accumulate(l3, w3_dyn)
 
-        # EDGE CASE 2: Base Case Fallback (None of the inputs existed)
+        # Edge Case 2: Base Case Fallback (None of the user inputs were valid)
         if valid_seeds_processed == 0:
             return self.get_popularity_baseline(limit=top_n)
 
-        # Sort combined results, grabbing extra to account for duplicates
+        # Sort the global pool. Request top_n * 3 to create a buffer for deduplication.
         sorted_tracks = sorted(scores_map.items(), key=lambda x: x[1], reverse=True)[:top_n * 3]
 
         if not sorted_tracks:
@@ -145,10 +210,11 @@ class HybridRecommender:
 
         rec_df = pd.DataFrame(sorted_tracks, columns=['track_id', 'hybrid_score'])
 
-        # Attach track metadata (names and artists) for readability
+        # Format track IDs for the SQL IN clause
         track_ids = rec_df['track_id'].tolist()
         placeholders = ','.join(['?'] * len(track_ids))
 
+        # Query metadata and use GROUP_CONCAT to prevent Cartesian Product row explosion on multi-genre tracks
         meta_query = f"""
                 SELECT 
                     track_id, 
@@ -164,19 +230,22 @@ class HybridRecommender:
 
         final_df = pd.merge(rec_df, meta_df, on='track_id', how='left')
 
-        # Drop songs with the exact same name and artist, keeping the one with the highest score
+        # Deduplication: Remove different track_ids that share the exact same title and artist (e.g. Single vs Album edits)
         final_df = final_df.drop_duplicates(subset=['track_name', 'artists'], keep='first')
 
-        # Return exactly the number of tracks requested
+        # Trim down to the strict requested length
         return final_df.sort_values(by='hybrid_score', ascending=False).head(top_n)
-
-    def close(self):
-        self.conn.close()
 
     def get_popularity_baseline(self, limit=10):
         """
-        Base Case: Returns the most globally popular tracks from the Alcrowd dataset.
-        Triggered when user seed songs are completely missing from all databases.
+        Base Case Strategy.
+        Returns the most globally popular tracks aggregated from the playlist dataset.
+
+        Args:
+            limit (int): The number of popular tracks to return.
+
+        Returns:
+            pd.DataFrame: A DataFrame of tracks scored purely by global playlist frequency.
         """
         query = """
         SELECT track_uri as track_id, CAST(COUNT(playlist_id) AS REAL) as popularity_score
@@ -190,7 +259,6 @@ class HybridRecommender:
         if pop_df.empty:
             return pd.DataFrame(columns=['track_id', 'hybrid_score', 'track_name', 'artists', 'all_genres'])
 
-        # Attach Kaggle metadata if the popular track happens to exist in the Golden Set
         track_ids = pop_df['track_id'].tolist()
         placeholders = ','.join(['?'] * len(track_ids))
 
@@ -209,26 +277,32 @@ class HybridRecommender:
 
         final_df = pd.merge(pop_df, meta_df, on='track_id', how='left')
 
-        # Rename column to match the expected output format
+        # Standardize column naming convention for the Streamlit frontend
         final_df = final_df.rename(columns={'popularity_score': 'hybrid_score'})
         return final_df
+
+    def close(self):
+        """Safely closes the SQLite connection."""
+        self.conn.close()
 
 
 # --- Test Script ---
 if __name__ == "__main__":
+    # Configure Pandas display limits for full terminal visibility
     pd.set_option('display.max_columns', None)
     pd.set_option('display.width', 1000)
+
     rec = HybridRecommender()
 
+    # Deterministic test query (pulls the first 3 rows consistently)
     sample_query = "SELECT track_id, track_name, artists FROM kaggle_audio_features LIMIT 3"
     sample = pd.read_sql_query(sample_query, rec.conn)
 
     if len(sample) >= 2:
         test_ids = sample['track_id'].tolist()
         names = sample['track_name'].tolist()
-        artists = sample['artists'].tolist()
 
-        print(f"Testing Strategy B (Accumulator) with:\n1. {names[0]} by {artists[0]}\n2. {names[1]} by {artists[1]}\n3. {names[2]} by {artists[2]}\n")
+        print(f"Testing Strategy B (Accumulator) with:\n1. {names[0]}\n2. {names[1]}\n3. {names[2]}\n")
 
         recommendations = rec.hybrid_recommend(test_ids, top_n=10)
         print("Top 10 Recommendations:")
