@@ -284,6 +284,10 @@ class HybridRecommender:
 
         final_df = pd.merge(rec_df, meta_df, on='track_id', how='left')
 
+        # --- DROP ORPHANED TRACK IDS WITH MISSING METADATA ---
+        final_df = final_df.dropna(subset=['track_name', 'artists'])
+        final_df = final_df[~final_df['track_name'].astype(str).str.lower().isin(['none', 'nan', ''])]
+
         # Deduplication: Remove different track_ids that share the exact same title and artist (e.g. Single vs Album edits)
         final_df = final_df.drop_duplicates(subset=['track_name', 'artists'], keep='first')
         # Drop any tracks that were used as seed songs
