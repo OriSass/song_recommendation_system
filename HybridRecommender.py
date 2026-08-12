@@ -29,6 +29,14 @@ class HybridRecommender:
 
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
 
+        feature_cols = ['danceability', 'energy', 'key', 'loudness', 'mode', 'speechiness',
+                        'acousticness', 'instrumentalness', 'liveness', 'valence', 'tempo']
+        all_tracks_query = f"SELECT track_id, {', '.join(feature_cols)} FROM kaggle_audio_features"
+        self._audio_df = pd.read_sql_query(all_tracks_query, self.conn)
+        self._audio_df = self._audio_df.set_index('track_id')
+        self._feature_matrix = self._audio_df[feature_cols].values.astype(float)
+        self._feature_track_ids = self._audio_df.index.to_numpy()
+
     def get_track_info(self, track_id):
         """
         Retrieves standard metadata (name and artist) for a specific track ID.
@@ -43,54 +51,20 @@ class HybridRecommender:
         return pd.read_sql_query(query, self.conn, params=(track_id,))
 
     def layer_1_audio_features(self, seed_track_id, limit=10):
-        """
-        Layer 1: Content-Based Filtering.
-        Calculates the Euclidean distance between the numeric audio features of the seed song
-        and all other songs in the database.
-
-        Args:
-            seed_track_id (str): The target track ID to compare against.
-            limit (int): The maximum number of candidate tracks to return.
-
-        Returns:
-            pd.DataFrame: A DataFrame of candidate track_ids and their normalized distance scores.
-        """
-        seed_query = """
-        SELECT danceability, energy, key, loudness, mode, speechiness, 
-               acousticness, instrumentalness, liveness, valence, tempo
-        FROM kaggle_audio_features 
-        WHERE track_id = ?
-        """
-        seed_df = pd.read_sql_query(seed_query, self.conn, params=(seed_track_id,))
-        if seed_df.empty:
+        if seed_track_id not in self._audio_df.index:
             return pd.DataFrame(columns=['track_id', 'score'])
 
-        # Extract numerical features for the seed track
-        seed_features = seed_df.iloc[0].values.astype(float)
+        seed_features = self._audio_df.loc[seed_track_id].values.astype(float)
 
-        all_query = """
-        SELECT track_id, danceability, energy, key, loudness, mode, speechiness, 
-               acousticness, instrumentalness, liveness, valence, tempo
-        FROM kaggle_audio_features
-        WHERE track_id != ?
-        """
-        tracks_df = pd.read_sql_query(all_query, self.conn, params=(seed_track_id,))
-        if tracks_df.empty:
-            return pd.DataFrame(columns=['track_id', 'score'])
+        mask = self._feature_track_ids != seed_track_id
+        candidate_ids = self._feature_track_ids[mask]
+        candidate_matrix = self._feature_matrix[mask]
 
-        feature_cols = ['danceability', 'energy', 'key', 'loudness', 'mode', 'speechiness',
-                        'acousticness', 'instrumentalness', 'liveness', 'valence', 'tempo']
-
-        # Vectorized Euclidean distance calculation using NumPy
-        feature_matrix = tracks_df[feature_cols].values.astype(float)
-        distances = np.linalg.norm(feature_matrix - seed_features, axis=1)
-
-        # Convert distances to similarity scores (closer distance = higher score)
+        distances = np.linalg.norm(candidate_matrix - seed_features, axis=1)
         scores = 1 / (1 + distances)
 
-        tracks_df['score'] = scores
-        return tracks_df[['track_id', 'score']].sort_values(by='score', ascending=False).head(limit)
-
+        result = pd.DataFrame({'track_id': candidate_ids, 'score': scores})
+        return result.sort_values(by='score', ascending=False).head(limit)
     def layer_2_collaborations(self, seed_track_id, limit=10):
         """
         Layer 2 (Model B): Combined Direct Artist + Collaborator Network.
@@ -211,7 +185,7 @@ class HybridRecommender:
 
         return df[['track_id', 'score']]
 
-    def hybrid_recommend(self, seed_track_ids, top_n=10):
+    def hybrid_recommend(self, seed_track_ids, top_n=10, normalize=True):
         """
         Executes the Accumulator Strategy. Loops through an array of seed tracks,
         calculates candidates independently across all 3 layers, and blends them
@@ -266,10 +240,11 @@ class HybridRecommender:
                 w3_dyn = 0.0
                 w1_dyn, w2_dyn = 0.5, 0.5
 
-            # Min-Max Scaling: Normalize layer scores to a 0.0 - 1.0 scale before applying weights
-            for df in [l1, l2, l3]:
-                if not df.empty and df['score'].max() > 0:
-                    df['score'] = df['score'] / df['score'].max()
+            if normalize:
+                # Min-Max Scaling: Normalize layer scores to a 0.0 - 1.0 scale before applying weights
+                for df in [l1, l2, l3]:
+                    if not df.empty and df['score'].max() > 0:
+                        df['score'] = df['score'] / df['score'].max()
 
             accumulate(l1, w1_dyn)
             accumulate(l2, w2_dyn)

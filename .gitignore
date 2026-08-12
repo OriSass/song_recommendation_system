@@ -3,7 +3,7 @@
 *.csv
 *.json
 million_playlist_dataset/
-audio_features_dataset/
+data/audio_features_dataset/
 
 # Python caches and environments
 __pycache__/
@@ -13,10 +13,10 @@ venv/
 ex/
 
 # general
-past_projects
+docs/past_projects
 tests
-projNeedle26.pdf
+docs/projNeedle26.pdf
 
 # debugging
-add_indexes.py
+db/add_indexes.py
 diagnostic.py

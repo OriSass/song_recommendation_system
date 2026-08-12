@@ -5,7 +5,7 @@ import glob
 from tqdm import tqdm
 
 # 1. Connect to the SQLite database
-conn = sqlite3.connect('spotify_recommender.db')
+conn = sqlite3.connect('../spotify_recommender.db')
 cursor = conn.cursor()
 
 # 2. Create Table 2 for the Playlist Data
@@ -18,7 +18,7 @@ cursor.execute('''
 
 # 3. Define the path to your data directory (update this to your actual path)
 # Use a raw string (r'...') in Windows to handle backslashes correctly
-data_dir = r'./million_playlist_dataset/data'
+data_dir = r'../million_playlist_dataset/data'
 
 # Find all .json files in that directory
 json_files = glob.glob(os.path.join(data_dir, '*.json'))

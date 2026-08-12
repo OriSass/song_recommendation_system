@@ -1,7 +1,9 @@
 import time
 
 import pandas as pd
-
+import sys, os
+sys.stdout.reconfigure(encoding='utf-8')
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from HybridRecommender import HybridRecommender
 
 
