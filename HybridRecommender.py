@@ -2,7 +2,7 @@ import sqlite3
 import pandas as pd
 import numpy as np
 import os
-
+import re
 
 class HybridRecommender:
     """
@@ -79,23 +79,24 @@ class HybridRecommender:
         if not raw_artist_str:
             return pd.DataFrame(columns=['track_id', 'score'])
 
-        seed_artists = [a.strip() for a in str(raw_artist_str).split(';') if a.strip()]
+        # seed_artists = [a.strip() for a in str(raw_artist_str).split(';') if a.strip()]
+        seed_artists = [a.strip() for a in re.split(r'[;,]', str(raw_artist_str)) if a.strip()]
         if not seed_artists:
             return pd.DataFrame(columns=['track_id', 'score'])
 
-        # 1. Get Direct Artist Tracks (Quota: half of the limit)
-        direct_limit = max(1, limit // 2)
+        # 1. Get Direct Artist Tracks (Quota: Hard cap to prevent artist flooding)
+        direct_limit = 2  # <-- Hard cap: Only allow 2 direct tracks per seed song!
         direct_clauses = " OR ".join(["artists = ?"] * len(seed_artists))
         direct_params = seed_artists + [seed_track_id, direct_limit]
 
         direct_query = f"""
-        SELECT track_id, artists
-        FROM kaggle_audio_features
-        WHERE ({direct_clauses}) AND track_id != ?
-        LIMIT ?
-        """
+                SELECT track_id, artists
+                FROM kaggle_audio_features
+                WHERE ({direct_clauses}) AND track_id != ?
+                LIMIT ?
+                """
         direct_df = pd.read_sql_query(direct_query, self.conn, params=direct_params)
-        direct_df['score'] = 1.0  # Direct artist gets max score
+        direct_df['score'] = 0.75  # <-- Lowered from 0.9 so strong audio/playlist matches can beat it
 
         # 2. Find Collaborator Artists from the dataset
         like_clauses = " OR ".join(["artists LIKE ?"] * len(seed_artists))
@@ -197,6 +198,7 @@ class HybridRecommender:
 
         Returns:
             pd.DataFrame: The final sorted recommendations with full track metadata.
+            :param normalize:
         """
         if isinstance(seed_track_ids, str):
             seed_track_ids = [seed_track_ids]
@@ -297,8 +299,37 @@ class HybridRecommender:
         # Drop any recommendations where the track_name matches a seed song name
         final_df = final_df[~final_df['track_name'].isin(seed_names_list)]
 
-        # Trim down to the strict requested length
-        return final_df.sort_values(by='hybrid_score', ascending=False).head(top_n)
+        # --- SMART ANTI-FLOOD ARTIST CAP ---
+        # --- SMART ANTI-FLOOD ARTIST CAP (COMMAS & SEMICOLONS) ---
+        final_df = final_df.sort_values(by='hybrid_score', ascending=False)
+
+        # Extract true primary artist (the very first artist before any comma or semicolon)
+        final_df['primary_artist'] = final_df['artists'].apply(lambda x: re.split(r'[;,]', str(x))[0].strip())
+
+        # Get all individual seed artists (splitting by comma or semicolon)
+        seed_info_df = pd.read_sql_query(
+            f"SELECT DISTINCT artists FROM kaggle_audio_features WHERE track_id IN ({','.join(['?'] * len(seed_track_ids))})",
+            self.conn, params=seed_track_ids
+        )
+        seed_artists_set = set()
+        for art_str in seed_info_df['artists'].dropna():
+            for a in re.split(r'[;,]', str(art_str)):
+                if a.strip():
+                    seed_artists_set.add(a.strip())
+
+        # Separate recommendations into "Known Seed Artists" vs "New Discoveries"
+        known_recs = final_df[final_df['primary_artist'].isin(seed_artists_set)]
+        new_recs = final_df[~final_df['primary_artist'].isin(seed_artists_set)]
+
+        # Hard Cap: Allow a MAXIMUM of 2 total tracks from the user's seed artists
+        max_known_allowed = 2
+        final_known = known_recs.head(max_known_allowed)
+
+        remaining_slots = top_n - len(final_known)
+        final_new = new_recs.head(remaining_slots)
+
+        final_df = pd.concat([final_known, final_new], ignore_index=True)
+        return final_df.head(top_n)
 
     def get_popularity_baseline(self, limit=10):
         """
@@ -348,6 +379,32 @@ class HybridRecommender:
     def close(self):
         """Safely closes the SQLite connection."""
         self.conn.close()
+
+    def get_random_tracks(self, limit=5):
+        """
+        Helper method for the frontend UI.
+        Fetches a random selection of tracks for the discovery panel.
+        """
+        query = "SELECT track_id, track_name, artists FROM kaggle_audio_features ORDER BY RANDOM() LIMIT ?"
+        return pd.read_sql_query(query, self.conn, params=(limit,))
+
+    def get_audio_features(self, track_ids):
+        """
+        Helper method for the frontend UI.
+        Fetches the 6 core audio features for a list of track IDs to use in the vibe analysis chart.
+        """
+        if isinstance(track_ids, str):
+            track_ids = [track_ids]
+
+        if not track_ids:
+            return pd.DataFrame()
+
+        placeholders = ','.join(['?'] * len(track_ids))
+        query = f"""
+            SELECT danceability, energy, valence, acousticness, instrumentalness, liveness 
+            FROM kaggle_audio_features WHERE track_id IN ({placeholders})
+        """
+        return pd.read_sql_query(query, self.conn, params=track_ids)
 
 
 # --- Test Script ---
