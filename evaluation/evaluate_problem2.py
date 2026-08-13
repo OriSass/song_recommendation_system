@@ -63,7 +63,7 @@ def evaluate_seed_drowning():
             continue
 
         for is_normalized in [True, False]:
-            recs = recommender.hybrid_recommend([pop_seed, niche_seed], top_n=20, normalize=is_normalized)
+            recs, _ = recommender.hybrid_recommend([pop_seed, niche_seed], top_n=20, normalize=is_normalized)
             niche_attributions = 0
 
             for _, rec in recs.iterrows():

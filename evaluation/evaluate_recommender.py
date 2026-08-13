@@ -52,7 +52,7 @@ def run_experiment(num_trials=3, playlists_per_trial=15, top_n=20, db_path='spot
             total_targets += len(targets)
 
             # Model B: Collaborator Network
-            rec_b = set(rec.hybrid_recommend(seeds, top_n=top_n)['track_id'].tolist())
+            rec_b, _ = set(rec.hybrid_recommend(seeds, top_n=top_n)['track_id'].tolist())
 
             # Calculate Intersections (Hits)
             base_hits += len(baseline_recs.intersection(targets))

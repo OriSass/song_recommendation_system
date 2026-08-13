@@ -39,7 +39,7 @@ def evaluate_backoff_strategy(total_playlists=100, top_n=20):
         if not targets: continue
 
         # 1. Full Signal (Normal Run)
-        recs_full = recommender.hybrid_recommend(seeds, top_n=top_n)
+        recs_full, _ = recommender.hybrid_recommend(seeds, top_n=top_n)
         rec_ids_full = set(recs_full['track_id'].tolist()) if not recs_full.empty else set()
         full_recall = (len(rec_ids_full.intersection(targets)) / len(targets)) * 100
         full_signal_recalls.append(full_recall)
@@ -48,7 +48,7 @@ def evaluate_backoff_strategy(total_playlists=100, top_n=20):
         original_l3 = recommender.layer_3_shared_playlists
         recommender.layer_3_shared_playlists = lambda *args, **kwargs: pd.DataFrame(columns=['track_id', 'score'])
 
-        recs_backoff = recommender.hybrid_recommend(seeds, top_n=top_n)
+        recs_backoff, _ = recommender.hybrid_recommend(seeds, top_n=top_n)
         rec_ids_backoff = set(recs_backoff['track_id'].tolist()) if not recs_backoff.empty else set()
         backoff_recall = (len(rec_ids_backoff.intersection(targets)) / len(targets)) * 100
         backoff_recalls.append(backoff_recall)
