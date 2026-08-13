@@ -1,5 +1,4 @@
 import re
-
 import altair as alt
 import pandas as pd
 import plotly.express as px
@@ -8,10 +7,10 @@ import streamlit as st
 
 from HybridRecommender import HybridRecommender
 
-# MUST be the very first Streamlit command in your file
+# Streamlit page configuration must precede all other Streamlit commands
 st.set_page_config(page_title="Spotify Hybrid Recommender", layout="wide")
 
-# --- UI & UX CSS STYLING ---
+# --- Custom CSS Injection ---
 st.markdown("""
     <style>
     h1, h2, h3 { text-align: center !important; }
@@ -43,7 +42,7 @@ st.markdown("""
 if 'seed_bank' not in st.session_state:
     st.session_state['seed_bank'] = []
 
-# --- Session state for persisting execution results ---
+# --- Initialize session state variables for execution persistence ---
 if 'recommendations' not in st.session_state:
     st.session_state['recommendations'] = None
 if 'full_candidate_pool' not in st.session_state:
@@ -64,7 +63,7 @@ def get_engine():
 rec = get_engine()
 
 
-# --- Load static global PCA background sample ---
+# --- Cache global PCA background sample to optimize load times ---
 @st.cache_data
 def load_global_sample():
     try:
@@ -73,9 +72,58 @@ def load_global_sample():
         return pd.DataFrame()
 
 
+@st.cache_data
+def build_offline_community_chart():
+    import networkx as nx
+    import plotly.graph_objects as go
+
+    G = nx.Graph()
+    try:
+        network_df = pd.read_csv("evaluation/global_artist_network.csv").head(400)
+        for _, row in network_df.iterrows():
+            G.add_edge(row['source'], row['target'])
+    except FileNotFoundError:
+        return None
+
+    # Precompute network physics layout and cache in memory
+    pos = nx.spring_layout(G, seed=42, k=0.15, iterations=35)
+
+    traces = []
+    edge_x, edge_y = [], []
+    for u, v in G.edges():
+        x0, y0 = pos[u]
+        x1, y1 = pos[v]
+        edge_x.extend([x0, x1, None])
+        edge_y.extend([y0, y1, None])
+
+    traces.append(
+        go.Scatter(x=edge_x, y=edge_y, line=dict(width=0.5, color='rgba(180, 180, 180, 0.5)'), hoverinfo='none',
+                   mode='lines'))
+
+    node_x, node_y, node_text, node_sizes = [], [], [], []
+    for node in G.nodes():
+        x, y = pos[node]
+        node_x.append(x)
+        node_y.append(y)
+        node_text.append(f"<b>{node}</b>")
+        deg = G.degree(node)
+        node_sizes.append(min(6 + (deg * 1.5), 24))
+
+    traces.append(go.Scatter(x=node_x, y=node_y, mode='markers', text=node_text, hoverinfo='text',
+                             marker=dict(showscale=False, color='#0068c9', size=node_sizes,
+                                         line=dict(width=1, color='rgba(50, 50, 50, 0.8)'))))
+
+    fig_comm = go.Figure(data=traces)
+    fig_comm.update_layout(height=420, margin=dict(t=20, b=10, l=10, r=10), showlegend=False,
+                           xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                           yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                           paper_bgcolor="#FFFFFF", plot_bgcolor="#FFFFFF", font=dict(family="Arial, sans-serif"))
+    return fig_comm
+
+
 col_seed, col_discover = st.columns(2)
 
-# --- LEFT COLUMN: THE CATCH AREA (Seed Bank) ---
+# --- Left Column: Seed Track Management ---
 with col_seed:
     st.subheader("📥 Your Seed Songs")
 
@@ -99,7 +147,7 @@ with col_seed:
         with st.container(height=300):
             st.info("Your seed bank is empty! Generate and add some songs from the right.")
 
-# --- RIGHT COLUMN: DISCOVER RANDOM SONGS ---
+# --- Right Column: Random Track Discovery ---
 with col_discover:
     st.subheader("🎲 Discover Random Songs")
 
@@ -126,9 +174,8 @@ with col_discover:
                     else:
                         st.toast(f"**{row['track_name']}** is already in your seed bank!", icon="⚠️")
 
-st.markdown("---")
 
-# --- RUN THE ENGINE BUTTON ---
+# --- Recommendation Engine Execution ---
 if len(st.session_state['seed_bank']) > 0:
     col1, col2, col3 = st.columns([1, 1, 1])
     with col2:
@@ -138,7 +185,6 @@ if len(st.session_state['seed_bank']) > 0:
         run_clicked = st.button("🚀 Run Recommendation Engine", type="primary", use_container_width=True)
 
     if run_clicked:
-        st.toast("Scroll down to view your results, stats, and audio visuals! 👇", icon="🚀")
         seed_ids = [song['track_id'] for song in st.session_state['seed_bank']]
 
         with st.spinner("Calculating hybrid scores..."):
@@ -151,8 +197,9 @@ if len(st.session_state['seed_bank']) > 0:
             st.session_state['full_candidate_pool'] = full_candidate_pool
             st.session_state['seed_feat_df'] = seed_feat_df
             st.session_state['rec_feat_df'] = rec_feat_df
+st.markdown("---")
 
-# --- DISPLAY RESULTS ONLY AFTER RUNNING ---
+# --- Results Rendering ---
 if st.session_state['recommendations'] is not None:
     results = st.session_state['recommendations']
     full_candidate_pool = st.session_state['full_candidate_pool']
@@ -178,7 +225,7 @@ if st.session_state['recommendations'] is not None:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # --- FUN QUICK STATISTICS ---
+    # --- QUICK STATISTICS ---
     st.markdown("### ⚡ Quick Vibe Check")
 
     stat1, stat2, stat3 = st.columns(3)
@@ -330,7 +377,8 @@ if st.session_state['recommendations'] is not None:
         with col_pca:
             st.markdown("### 🔭 Global vs. Current: PCA Space")
             st.caption(
-                "Mapping this session's tracks over the entire global dataset to prove the engine explores niche boundaries.")
+                "Mapping this session's tracks over the entire global dataset to prove"
+                " the engine explores niche boundaries.")
 
             if not seed_feat_df.empty and not rec_feat_df.empty:
                 from sklearn.decomposition import PCA
@@ -402,6 +450,12 @@ if st.session_state['recommendations'] is not None:
                 )
 
                 st.plotly_chart(fig_pca, use_container_width=True)
+
+                # Highlight the visual impact of the normalization toggle
+                st.markdown(
+                    "**💡 Observation: Without normalization, the red recommendation dots cluster into a"
+                    " dense center mass. When normalization is applied (near run button), the recommendations become less "
+                    "dense and much more scattered, proving the engine is successfully pulling niche tracks.**")
             else:
                 st.info("Not enough audio data to generate the PCA space.")
 
@@ -457,7 +511,7 @@ if st.session_state['recommendations'] is not None:
             st.caption(
                 "Tracing influence from your specific Seed Artists to the final output tracks, validating the anti-flood cap.")
 
-            # 1. Extract unique Seed Artists (Truncated for clean UI)
+            # Extract and truncate unique seed artists for UI formatting
             seed_artists_list = []
             for song in st.session_state['seed_bank']:
                 for a in re.split(r'[;,]', str(song['artists'])):
@@ -465,7 +519,7 @@ if st.session_state['recommendations'] is not None:
                         art_name = a.strip()
                         seed_artists_list.append(art_name[:15] + "..." if len(art_name) > 15 else art_name)
 
-            # 2. Extract Output Artists and count tracks per artist (The Anti-Flood Proof)
+            # Extract output artists and aggregate track counts to validate quota constraints
             output_artists_counts = {}
             for i, row in display_df.iterrows():
                 primary_rec_artist = str(row['Artist(s)']).split(',')[0].strip()
@@ -475,11 +529,11 @@ if st.session_state['recommendations'] is not None:
 
             rec_artists_list = list(output_artists_counts.keys())
 
-            # 3. Build Nodes (Left: Seeds, Middle: Engine, Right: Outputs)
+            # Construct Sankey nodes (Seeds -> Engine -> Outputs)
             engine_node_idx = len(seed_artists_list)
 
-            # MAKE LABELS BOLD FOR EXTRA CLARITY
-            raw_nodes = seed_artists_list + ["⚙️ Hybrid Engine"] + rec_artists_list
+            # Apply bold HTML tags to node labels for readability
+            raw_nodes = seed_artists_list + [" "] + rec_artists_list
             all_nodes = [f"<b>{name}</b>" for name in raw_nodes]
 
             node_colors = ['#0068c9'] * len(seed_artists_list) + ['#333333'] + ['#ff4b4b'] * len(
@@ -489,19 +543,19 @@ if st.session_state['recommendations'] is not None:
             links_target = []
             links_value = []
 
-            # Flow 1: Seeds -> Engine
+            # Map edges: Seeds to Engine
             for s_idx in range(len(seed_artists_list)):
                 links_source.append(s_idx)
                 links_target.append(engine_node_idx)
                 links_value.append(1)
 
-                # Flow 2: Engine -> Output Artists
+            # Map edges: Engine to Output Artists
             for r_idx, r_artist in enumerate(rec_artists_list):
                 links_source.append(engine_node_idx)
                 links_target.append(engine_node_idx + 1 + r_idx)
                 links_value.append(output_artists_counts[r_artist])
 
-            # 4. Render the Figure
+            # Render the Figure
             fig_network = go.Figure(data=[go.Sankey(
                 node=dict(
                     pad=20,
@@ -522,100 +576,28 @@ if st.session_state['recommendations'] is not None:
                 height=420,
                 margin=dict(t=20, b=10, l=10, r=30),
                 font=dict(color="black", size=13, family="Arial, sans-serif"),
-                # THE MAGIC FIX: Force the background white so the shadow blends in perfectly
+                # Force a white background to ensure seamless shadow blending for the Sankey nodes
                 paper_bgcolor="#FFFFFF",
                 plot_bgcolor="#FFFFFF"
             )
 
-            st.plotly_chart(fig_network, use_container_width=True, theme=None)    # TAB 3: DYNAMIC BACKOFF STRATEGY
-    # ==========================================
+            st.plotly_chart(fig_network, use_container_width=True, theme=None)
     # ==========================================
     # TAB 3: DYNAMIC BACKOFF STRATEGY
     # ==========================================
     with tab3:
 
         col_network, col_weights_chart = st.columns([1.2, 1])
-
         # --- COLUMN 1: Global Artist Community Graph (Offline Data) ---
         with col_network:
             st.markdown("### 🕸️ Offline Data: Global Community",
                         help="Visualizing the strongest historical collaborations from the Kaggle dataset. Node size highlights 'Hub' artists with the most connections (Degree Centrality).")
 
-            import networkx as nx
-            import plotly.graph_objects as go
-
-            G = nx.Graph()
-
-            # 1. Load the Pre-Computed Optimized Network CSV
-            try:
-                # Load the full CSV but only plot the top 400 strongest edges for browser performance
-                network_df = pd.read_csv("evaluation/global_artist_network.csv").head(400)
-                for _, row in network_df.iterrows():
-                    G.add_edge(row['source'], row['target'])
-            except FileNotFoundError:
+            fig_comm = build_offline_community_chart()
+            if fig_comm:
+                st.plotly_chart(fig_comm, use_container_width=True, theme=None)
+            else:
                 st.warning("⚠️ Run `generate_artist_collabs_data.py` to generate the background community graph.")
-
-            # 2. Compute Physics Layout
-            pos = nx.spring_layout(G, seed=42, k=0.15, iterations=35)
-
-            traces = []
-
-            # 3. Build Plotly Edges (Uniform, clean thin lines)
-            edge_x = []
-            edge_y = []
-            for u, v in G.edges():
-                x0, y0 = pos[u]
-                x1, y1 = pos[v]
-                edge_x.extend([x0, x1, None])
-                edge_y.extend([y0, y1, None])
-
-            traces.append(go.Scatter(
-                x=edge_x, y=edge_y,
-                line=dict(width=0.5, color='rgba(180, 180, 180, 0.5)'),
-                hoverinfo='none',
-                mode='lines'
-            ))
-
-            # 4. Build Plotly Nodes (Sized dynamically by degree to show Hubs)
-            node_x, node_y, node_text, node_sizes = [], [], [], []
-
-            for node in G.nodes():
-                x, y = pos[node]
-                node_x.append(x)
-                node_y.append(y)
-                node_text.append(f"<b>{node}</b>")
-
-                # Dynamic sizing based on how many connections the artist has
-                deg = G.degree(node)
-                node_sizes.append(min(6 + (deg * 1.5), 24))
-
-            traces.append(go.Scatter(
-                x=node_x, y=node_y,
-                mode='markers',
-                text=node_text,
-                hoverinfo='text',
-                marker=dict(
-                    showscale=False,
-                    color='#0068c9',  # Clean, uniform aesthetic for offline data
-                    size=node_sizes,
-                    line=dict(width=1, color='rgba(50, 50, 50, 0.8)')
-                )
-            ))
-
-            # 5. Render the Figure
-            fig_comm = go.Figure(data=traces)
-            fig_comm.update_layout(
-                height=420,
-                margin=dict(t=20, b=10, l=10, r=10),
-                showlegend=False,
-                xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-                yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-                paper_bgcolor="#FFFFFF",
-                plot_bgcolor="#FFFFFF",
-                font=dict(family="Arial, sans-serif")
-            )
-
-            st.plotly_chart(fig_comm, use_container_width=True, theme=None)        # --- COLUMN 2: Weight Redistribution Bar Chart ---
         with col_weights_chart:
             help_text = (
                 "**🔄 Two-State Dynamic Weighting**\n\n"
@@ -656,6 +638,9 @@ if st.session_state['recommendations'] is not None:
             )
 
             st.plotly_chart(fig_weights, use_container_width=True)
+
+    if run_clicked:
+        st.toast("Dashboard fully loaded! 👇", icon="✅")
 
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown("<br>", unsafe_allow_html=True)

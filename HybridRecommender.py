@@ -4,6 +4,7 @@ import numpy as np
 import os
 import re
 
+
 class HybridRecommender:
     """
     A music recommendation engine utilizing a hybrid accumulator strategy.
@@ -65,26 +66,37 @@ class HybridRecommender:
 
         result = pd.DataFrame({'track_id': candidate_ids, 'score': scores})
         return result.sort_values(by='score', ascending=False).head(limit)
+
     def layer_2_collaborations(self, seed_track_id, limit=10):
         """
         Layer 2 (Model B): Combined Direct Artist + Collaborator Network.
-        Explicitly splits the candidate quota between direct seed artist tracks
-        and frequent collaborator tracks so both are represented without crowding.
+        Delegates to helpers to split the candidate quota between direct and collaborator tracks.
         """
         seed_info = self.get_track_info(seed_track_id)
-        if seed_info.empty:
+        if seed_info.empty or not seed_info.iloc[0]['artists']:
             return pd.DataFrame(columns=['track_id', 'score'])
 
-        raw_artist_str = seed_info.iloc[0]['artists']
-        if not raw_artist_str:
-            return pd.DataFrame(columns=['track_id', 'score'])
-
-        seed_artists = [a.strip() for a in re.split(r'[;,]', str(raw_artist_str)) if a.strip()]
+        seed_artists = [a.strip() for a in re.split(r'[;,]', str(seed_info.iloc[0]['artists'])) if a.strip()]
         if not seed_artists:
             return pd.DataFrame(columns=['track_id', 'score'])
 
-        # 1. Get Direct Artist Tracks (Quota: Hard cap to prevent artist flooding)
-        direct_limit = 2  # <-- Hard cap: Only allow 2 direct tracks per seed song!
+        # 1. Get Direct Artist Tracks
+        direct_df = self._get_direct_artist_tracks(seed_artists, seed_track_id, direct_limit=2)
+
+        # 2. Get Collaborator Tracks
+        collab_limit = limit - len(direct_df)
+        collab_df = self._get_collaborator_tracks(seed_artists, seed_track_id, collab_limit)
+
+        # 3. Combine pools cleanly
+        combined_dfs = [df for df in [direct_df, collab_df] if not df.empty]
+        if not combined_dfs:
+            return pd.DataFrame(columns=['track_id', 'score'])
+
+        final_df = pd.concat(combined_dfs, ignore_index=True).drop_duplicates(subset=['track_id'])
+        return final_df[['track_id', 'score']].sort_values(by='score', ascending=False).head(limit)
+
+    def _get_direct_artist_tracks(self, seed_artists, seed_track_id, direct_limit=2):
+        """Helper to fetch tracks directly by the seed artists, enforcing a hard quota."""
         direct_clauses = " OR ".join(["artists = ?"] * len(seed_artists))
         direct_params = seed_artists + [seed_track_id, direct_limit]
 
@@ -95,9 +107,14 @@ class HybridRecommender:
                 LIMIT ?
                 """
         direct_df = pd.read_sql_query(direct_query, self.conn, params=direct_params)
-        direct_df['score'] = 0.75  # <-- Lowered from 0.9 so strong audio/playlist matches can beat it
+        direct_df['score'] = 0.75  # Base score for direct matches
+        return direct_df
 
-        # 2. Find Collaborator Artists from the dataset
+    def _get_collaborator_tracks(self, seed_artists, seed_track_id, limit):
+        """Helper to identify frequent collaborators and dynamically score their tracks."""
+        if limit <= 0:
+            return pd.DataFrame(columns=['track_id', 'score'])
+
         like_clauses = " OR ".join(["artists LIKE ?"] * len(seed_artists))
         collab_params = [f"%{artist}%" for artist in seed_artists]
         collab_query = f"SELECT artists FROM kaggle_audio_features WHERE ({like_clauses})"
@@ -110,51 +127,42 @@ class HybridRecommender:
                 if artist and artist not in seed_artists:
                     collaborator_counts[artist] = collaborator_counts.get(artist, 0) + 1
 
-        # 3. Get Collaborator Tracks (Quota: remaining limit slots)
-        collab_dfs = []
-        if collaborator_counts:
-            sorted_collaborators = sorted(collaborator_counts.items(), key=lambda x: x[1], reverse=True)
-            top_collaborators = [artist for artist, count in sorted_collaborators[:5]]
+        if not collaborator_counts:
+            return pd.DataFrame(columns=['track_id', 'score'])
 
-            collab_limit = limit - len(direct_df)
-            if collab_limit > 0:
-                collab_clauses = " OR ".join(["artists LIKE ?"] * len(top_collaborators))
-                collab_target_params = [f"%{ca}%" for ca in top_collaborators] + [seed_track_id, collab_limit]
+        sorted_collaborators = sorted(collaborator_counts.items(), key=lambda x: x[1], reverse=True)
+        top_collaborators = [artist for artist, count in sorted_collaborators[:5]]
 
-                collab_query_db = f"""
-                SELECT track_id, artists
-                FROM kaggle_audio_features
-                WHERE ({collab_clauses}) AND track_id != ?
-                LIMIT ?
-                """
-                collab_candidates = pd.read_sql_query(collab_query_db, self.conn, params=collab_target_params)
+        collab_clauses = " OR ".join(["artists LIKE ?"] * len(top_collaborators))
+        collab_target_params = [f"%{ca}%" for ca in top_collaborators] + [seed_track_id, limit]
 
-                # Assign dynamic scores based on collaboration frequency
-                scores = []
-                for _, row in collab_candidates.iterrows():
-                    row_artists = [a.strip() for a in str(row['artists']).split(';')]
-                    c_score = 0.85  # Default strong collaborator score
-                    for ca in top_collaborators:
-                        if ca in row_artists or ca in str(row['artists']):
-                            freq = collaborator_counts.get(ca, 1)
-                            c_score = min(1.0, 0.85 + (0.03 * freq))
-                            break
-                    scores.append(c_score)
-                collab_candidates['score'] = scores
-                collab_dfs.append(collab_candidates)
+        collab_query_db = f"""
+        SELECT track_id, artists
+        FROM kaggle_audio_features
+        WHERE ({collab_clauses}) AND track_id != ?
+        LIMIT ?
+        """
+        collab_candidates = pd.read_sql_query(collab_query_db, self.conn, params=collab_target_params)
 
-        # 4. Combine both pools cleanly
-        combined_dfs = [direct_df] + collab_dfs
-        final_df = pd.concat(combined_dfs, ignore_index=True).drop_duplicates(subset=['track_id'])
+        scores = []
+        for _, row in collab_candidates.iterrows():
+            row_artists = [a.strip() for a in str(row['artists']).split(';')]
+            c_score = 0.85
+            for ca in top_collaborators:
+                if ca in row_artists or ca in str(row['artists']):
+                    freq = collaborator_counts.get(ca, 1)
+                    c_score = min(1.0, 0.85 + (0.03 * freq))
+                    break
+            scores.append(c_score)
 
-        return final_df[['track_id', 'score']].sort_values(by='score', ascending=False).head(limit)
-
+        collab_candidates['score'] = scores
+        return collab_candidates
 
     def layer_3_shared_playlists(self, seed_track_id, limit=10, max_playlists=100):
         """
         Layer 3: Collaborative Filtering via Shared Playlists.
-        Bulletproof Optimization: Uses a two-step Python process to absolutely force
-        SQLite to use indexes, bypassing its broken subquery optimizer.
+        Implements a two-step execution plan to enforce SQLite index usage and bypass
+        subquery optimization inefficiencies.
         """
         # Step 1: Explicitly grab up to 100 playlist IDs
         p_query = "SELECT playlist_id FROM playlists WHERE track_uri = ? LIMIT ?"
@@ -194,10 +202,10 @@ class HybridRecommender:
         Args:
             seed_track_ids (list): A list of input track IDs to base recommendations on.
             top_n (int): The final number of unique recommendations to return.
+            normalize (bool): Applies min-max scaling to layer scores before accumulation.
 
         Returns:
-            pd.DataFrame: The final sorted recommendations with full track metadata.
-            :param normalize:
+            tuple: A tuple containing the capped Top N recommendations (pd.DataFrame) and the raw candidate pool (pd.DataFrame).
         """
         if isinstance(seed_track_ids, str):
             seed_track_ids = [seed_track_ids]
@@ -205,61 +213,72 @@ class HybridRecommender:
         scores_map = {}
         valid_seeds_processed = 0
 
-        def accumulate(df, weight):
-            """Helper function to incrementally add weighted scores to the global pool."""
-            if df is not None and not df.empty:
-                for _, row in df.iterrows():
-                    tid = row['track_id']
-                    # Prevent recommending the seed songs back to the user
-                    if tid in seed_track_ids:
-                        continue
-                    sc = row['score']
-                    scores_map[tid] = scores_map.get(tid, 0.0) + (sc * weight)
-
-        # Iterate through each user-provided seed song
+        # Delegate individual seed processing and accumulation
         for seed_id in seed_track_ids:
-            l1 = self.layer_1_audio_features(seed_id, limit=50)
-            l2 = self.layer_2_collaborations(seed_id, limit=50)
-            l3 = self.layer_3_shared_playlists(seed_id, limit=50)
-            w1_dyn, w2_dyn, w3_dyn = 0.25, 0.4, 0.35
+            if self._score_single_seed(seed_id, seed_track_ids, scores_map, normalize):
+                valid_seeds_processed += 1
 
-            # Edge Case 1: Track does not exist in any dataset
-            if l1.empty and l3.empty:
-                continue
-
-            valid_seeds_processed += 1
-
-            if l1.empty:
-                # Track is missing from Kaggle; rely entirely on Alcrowd playlists
-                w1_dyn, w2_dyn = 0.0, 0.0
-                w3_dyn = 1.0
-            elif l3.empty:
-                # Track is missing from Alcrowd; rely entirely on Kaggle audio/metadata
-                w3_dyn = 0.0
-                w1_dyn, w2_dyn = 0.5, 0.5
-
-            if normalize:
-                # Min-Max Scaling: Normalize layer scores to a 0.0 - 1.0 scale before applying weights
-                for df in [l1, l2, l3]:
-                    if not df.empty and df['score'].max() > 0:
-                        df['score'] = df['score'] / df['score'].max()
-
-            accumulate(l1, w1_dyn)
-            accumulate(l2, w2_dyn)
-            accumulate(l3, w3_dyn)
-
-        # Edge Case 2: Base Case Fallback (None of the user inputs were valid)
+        # Edge Case 2: Base Case Fallback
         if valid_seeds_processed == 0:
-            return self.get_popularity_baseline(limit=top_n)
+            return self.get_popularity_baseline(limit=top_n), pd.DataFrame()
 
-        # Sort the global pool. Request top_n * 3 to create a buffer for deduplication.
+        # Sort the global pool
         sorted_tracks = sorted(scores_map.items(), key=lambda x: x[1], reverse=True)[:top_n * 20]
 
         if not sorted_tracks:
-            return pd.DataFrame(columns=['track_id', 'hybrid_score', 'track_name', 'artists', 'all_genres'])
+            return pd.DataFrame(
+                columns=['track_id', 'hybrid_score', 'track_name', 'artists', 'all_genres']), pd.DataFrame()
 
         rec_df = pd.DataFrame(sorted_tracks, columns=['track_id', 'hybrid_score'])
 
+        # Delegate database querying and data cleaning to the private helper method
+        return self._filter_and_format_results(rec_df, seed_track_ids, top_n)
+
+    def _score_single_seed(self, seed_id, all_seed_ids, scores_map, normalize):
+        """
+        Helper to fetch all 3 layers for a single seed, apply dynamic backoff weighting,
+        normalize, and accumulate the scores into the global pool.
+        """
+        l1 = self.layer_1_audio_features(seed_id, limit=50)
+        l2 = self.layer_2_collaborations(seed_id, limit=50)
+        l3 = self.layer_3_shared_playlists(seed_id, limit=50)
+
+        # Edge Case 1: Track does not exist in any dataset
+        if l1.empty and l3.empty:
+            return False
+
+        w1_dyn, w2_dyn, w3_dyn = 0.25, 0.4, 0.35
+
+        # Dynamic Backoff Strategy
+        if l1.empty:
+            w1_dyn, w2_dyn, w3_dyn = 0.0, 0.0, 1.0
+        elif l3.empty:
+            w1_dyn, w2_dyn, w3_dyn = 0.5, 0.5, 0.0
+
+        if normalize:
+            for df in [l1, l2, l3]:
+                if not df.empty and df['score'].max() > 0:
+                    df['score'] = df['score'] / df['score'].max()
+
+        def accumulate(df, weight):
+            if df is not None and not df.empty:
+                for _, row in df.iterrows():
+                    tid = row['track_id']
+                    if tid in all_seed_ids:
+                        continue
+                    scores_map[tid] = scores_map.get(tid, 0.0) + (row['score'] * weight)
+
+        accumulate(l1, w1_dyn)
+        accumulate(l2, w2_dyn)
+        accumulate(l3, w3_dyn)
+
+        return True
+
+    def _filter_and_format_results(self, rec_df, seed_track_ids, top_n):
+        """
+        Private helper method to query metadata, clean missing/invalid entries,
+        deduplicate tracks, and enforce the anti-flood artist quota.
+        """
         # Format track IDs for the SQL IN clause
         track_ids = rec_df['track_id'].tolist()
         placeholders = ','.join(['?'] * len(track_ids))
@@ -280,29 +299,26 @@ class HybridRecommender:
 
         final_df = pd.merge(rec_df, meta_df, on='track_id', how='left')
 
-        # --- DROP ORPHANED TRACK IDS WITH MISSING METADATA ---
+        # Drop orphaned track IDs with missing or invalid metadata
         final_df = final_df.dropna(subset=['track_name', 'artists'])
         final_df = final_df[~final_df['track_name'].astype(str).str.lower().isin(['none', 'nan', ''])]
 
-        # Deduplication: Remove different track_ids that share the exact same title and artist (e.g. Single vs Album edits)
+        # Deduplicate disparate track IDs sharing identical titles and artists (e.g., Single vs. Album edits)
         final_df = final_df.drop_duplicates(subset=['track_name', 'artists'], keep='first')
-        # Drop any tracks that were used as seed songs
         final_df = final_df[~final_df['track_id'].isin(seed_track_ids)]
 
-        # --- NEW: PHANTOM DUPLICATE FILTER ---
-        # Query the database to get the exact track names of the seed IDs
+        # Filter phantom duplicates by dropping recommendations matching seed track names
         seed_placeholders = ','.join(['?'] * len(seed_track_ids))
         seed_names_query = f"SELECT DISTINCT track_name FROM kaggle_audio_features WHERE track_id IN ({seed_placeholders})"
         seed_names_df = pd.read_sql_query(seed_names_query, self.conn, params=seed_track_ids)
         seed_names_list = seed_names_df['track_name'].tolist()
 
-        # Drop any recommendations where the track_name matches a seed song name
         final_df = final_df[~final_df['track_name'].isin(seed_names_list)]
 
-        # --- SMART ANTI-FLOOD ARTIST CAP (COMMAS & SEMICOLONS) ---
+        # Enforce artist quota limits using primary artist extraction
         final_df = final_df.sort_values(by='hybrid_score', ascending=False)
 
-        # --> SAVE THE RAW CANDIDATE POOL BEFORE CAPPING <--
+        # Preserve pre-filtered candidate pool for frontend evaluation visuals
         raw_candidate_pool = final_df.copy()
 
         # Extract true primary artist (the very first artist before any comma or semicolon)
@@ -319,11 +335,11 @@ class HybridRecommender:
                 if a.strip():
                     seed_artists_set.add(a.strip())
 
-        # Separate recommendations into "Known Seed Artists" vs "New Discoveries"
+        # Partition candidate pool into known seed artists and new discoveries
         known_recs = final_df[final_df['primary_artist'].isin(seed_artists_set)]
         new_recs = final_df[~final_df['primary_artist'].isin(seed_artists_set)]
 
-        # Hard Cap: Allow a MAXIMUM of 2 total tracks from the user's seed artists
+        # Apply maximum allowable threshold for known seed artists
         max_known_allowed = 2
         final_known = known_recs.head(max_known_allowed)
 
@@ -332,7 +348,7 @@ class HybridRecommender:
 
         capped_final_df = pd.concat([final_known, final_new], ignore_index=True)
 
-        # Return the capped Top 10, AND the full raw uncapped pool!
+        # Return bounded top N recommendations alongside the complete evaluation pool
         return capped_final_df.head(top_n), raw_candidate_pool
 
     def get_popularity_baseline(self, limit=10):
@@ -431,6 +447,7 @@ class HybridRecommender:
             FROM kaggle_audio_features
         '''
         return pd.read_sql_query(query, self.conn)
+
 
 # --- Test Script ---
 if __name__ == "__main__":
