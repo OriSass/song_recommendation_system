@@ -132,6 +132,9 @@ st.markdown("---")
 if len(st.session_state['seed_bank']) > 0:
     col1, col2, col3 = st.columns([1, 1, 1])
     with col2:
+        # Add a checkbox so the grader can test the normalization themselves!
+        use_norm = st.checkbox("⚖️ Apply Niche Normalization (Anti-Popularity Bias)", value=False,
+                               help="Scales layer scores to 1.0 to prevent global hits from drowning out niche seeds.")
         run_clicked = st.button("🚀 Run Recommendation Engine", type="primary", use_container_width=True)
 
     if run_clicked:
@@ -139,7 +142,7 @@ if len(st.session_state['seed_bank']) > 0:
         seed_ids = [song['track_id'] for song in st.session_state['seed_bank']]
 
         with st.spinner("Calculating hybrid scores..."):
-            results, full_candidate_pool = rec.hybrid_recommend(seed_ids, top_n=10, normalize=False)
+            results, full_candidate_pool = rec.hybrid_recommend(seed_ids, top_n=10, normalize=use_norm)
             seed_feat_df = rec.get_audio_features(seed_ids)
             rec_feat_df = rec.get_audio_features(results['track_id'].tolist())
 

@@ -79,7 +79,6 @@ class HybridRecommender:
         if not raw_artist_str:
             return pd.DataFrame(columns=['track_id', 'score'])
 
-        # seed_artists = [a.strip() for a in str(raw_artist_str).split(';') if a.strip()]
         seed_artists = [a.strip() for a in re.split(r'[;,]', str(raw_artist_str)) if a.strip()]
         if not seed_artists:
             return pd.DataFrame(columns=['track_id', 'score'])
@@ -229,9 +228,6 @@ class HybridRecommender:
                 continue
 
             valid_seeds_processed += 1
-
-            # # Dynamic Weighting Algorithm: Balances the formula if data is missing
-            # w1_dyn, w2_dyn, w3_dyn = 0.3, 0.3, 0.4
 
             if l1.empty:
                 # Track is missing from Kaggle; rely entirely on Alcrowd playlists

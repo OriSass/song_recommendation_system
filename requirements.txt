@@ -1,0 +1,7 @@
+streamlit
+pandas
+numpy
+altair
+plotly
+networkx
+scikit-learn
