@@ -1,8 +1,11 @@
-import streamlit as st
-import pandas as pd
-import altair as alt
 import re
+
+import altair as alt
+import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
+import streamlit as st
+
 from HybridRecommender import HybridRecommender
 
 # MUST be the very first Streamlit command in your file
@@ -218,9 +221,9 @@ if st.session_state['recommendations'] is not None:
         "Explore how the hybrid engine solves core recommendation challenges based on your current seeds and global dataset.")
 
     tab1, tab2, tab3 = st.tabs([
-        "🎯 Sub-Problem 1: Model Recall & Performance",
-        "🌐 Sub-Problem 2: Mitigating Popularity Bias",
-        "⚙️ Sub-Problem 3: Dynamic Backoff Strategy"
+        "🎯 Sub-Problem 1: Performance",
+        "🌐 Sub-Problem 2: Popularity Bias",
+        "⚙️ Sub-Problem 3: Backoff Strategy"
     ])
 
     # ==========================================
@@ -230,8 +233,9 @@ if st.session_state['recommendations'] is not None:
         col1, col2, col3 = st.columns(3)
 
         with col1:
-            st.markdown("### Separating Signal from Noise")
-            st.caption("Score decay across all candidates, highlighting the 'long tail' distribution.")
+            st.markdown("### 📉 Current Run: Score Decay")
+            st.caption(
+                "Score distribution of all candidate tracks evaluated in this specific session, highlighting the 'long tail'.")
 
             decay_df = full_candidate_pool.reset_index(drop=True)
             decay_df['Rank'] = decay_df.index + 1
@@ -253,9 +257,9 @@ if st.session_state['recommendations'] is not None:
             st.plotly_chart(fig1, use_container_width=True)
 
         with col2:
-            st.markdown("### Why Popularity Fails")
-            st.caption("Offline Evaluation: Mean Recall (Baseline vs. Hybrid Model)")
-
+            st.markdown("### 📊 Offline Data: Model Recall")
+            st.caption(
+                "Historical evaluation (Mean Recall@20) comparing the hybrid engine against a global popularity baseline.")
             try:
                 eval_df = pd.read_csv("evaluation/evaluation_results.csv")
                 eval_melted = eval_df.melt(
@@ -287,8 +291,9 @@ if st.session_state['recommendations'] is not None:
                 st.info("⚠️ Ensure 'evaluation_results.csv' is in your project directory.")
 
         with col3:
-            st.markdown("### 🎛️ Audio Vibe Analysis")
-            st.caption("Average audio features of your Seeds vs. Recommendations.")
+            st.markdown("### 🎛️ Current Run: Vibe Match")
+            st.caption(
+                "Direct comparison of the average audio features between your input seeds and the final recommendations.")
 
             if not seed_feat_df.empty and not rec_feat_df.empty:
                 compare_df = pd.DataFrame({
@@ -316,20 +321,16 @@ if st.session_state['recommendations'] is not None:
     # TAB 2: MITIGATING POPULARITY BIAS (Side-by-Side at height=420)
     # ==========================================
     with tab2:
-        st.markdown("### 🌌 The Global Audio Universe & Feature Space")
-        st.caption(
-            "Validating the acoustic feature space and visualizing how the engine explores niche outer edges rather than the popular center.")
-
-        col_pca, col_corr = st.columns([1.3, 1])
+        col_pca, col_corr, col_network = st.columns(3)
 
         # --- 1. Global PCA Scatter Plot ---
         with col_pca:
-            st.markdown("### 🔭 Finding Outliers (PCA Space)",
-                        help="Compressed core audio features into 2 dimensions via PCA. The gray background cloud represents the full global dataset, showing that recommendations successfully explore sparse outer boundaries.")
+            st.markdown("### 🔭 Global vs. Current: PCA Space")
+            st.caption(
+                "Mapping this session's tracks over the entire global dataset to prove the engine explores niche boundaries.")
 
             if not seed_feat_df.empty and not rec_feat_df.empty:
                 from sklearn.decomposition import PCA
-                import numpy as np
 
                 global_df = load_global_sample().copy()
                 if not global_df.empty:
@@ -392,7 +393,7 @@ if st.session_state['recommendations'] is not None:
                 fig_pca.update_layout(
                     height=420,
                     margin=dict(t=20, b=10, l=10, r=10),
-                    legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5, title_text=""),
+                    legend=dict(orientation="h", yanchor="bottom", y=-0.35, xanchor="center", x=0.5, title_text=""),
                     xaxis=dict(showticklabels=False, title=""),
                     yaxis=dict(showticklabels=False, title="")
                 )
@@ -401,11 +402,21 @@ if st.session_state['recommendations'] is not None:
             else:
                 st.info("Not enough audio data to generate the PCA space.")
 
-        # --- 2. Acoustic Feature Correlation Heatmap (Diverging Scale & Precise Framing) ---
+        # --- 2. Acoustic Feature Correlation Heatmap ---
         with col_corr:
-            st.markdown("### 🌡️ Global Dataset: Feature Correlation",
-                        help="Calculated across all Kaggle tracks. While most features hover near independence, key pairs show strong linear dependence (e.g., acousticness vs. energy at −0.73), justifying dimensionality reduction via PCA to remove redundancy.")
 
+            help_text = (
+                "This heatmap helps us spot redundant information by looking for large numbers (ignoring the positive/negative sign).\n\n"
+                "For example, the deep red **-0.73** between `acousticness` and `energy` proves a massive inverse relationship: highly acoustic songs are almost never highly energetic.\n\n"
+                "Because features like these heavily overlap in the story they tell, we can safely use PCA to compress them into fewer dimensions without losing the track's core musical identity."
+            )
+
+            # The title with the [?] tooltip
+            st.markdown("### 🌡️ Offline Data: Feature Correlation", help=help_text)
+
+            # The high-level sentence visible directly on the page
+            st.caption(
+                "Collinearity matrix calculated across all Kaggle tracks, justifying dimensionality reduction via PCA.")
             global_df_cache = load_global_sample()
             if not global_df_cache.empty:
                 desired_features = ['acousticness', 'danceability', 'energy', 'instrumentalness', 'liveness',
@@ -415,7 +426,6 @@ if st.session_state['recommendations'] is not None:
                 if len(valid_corr_features) > 1:
                     corr_matrix = global_df_cache[valid_corr_features].corr()
 
-                    # FIX: Use a diverging colormap ('RdBu') centered at 0 so positive and negative values pull apart visually
                     fig_corr = px.imshow(
                         corr_matrix,
                         text_auto=".2f",
@@ -428,7 +438,8 @@ if st.session_state['recommendations'] is not None:
                     fig_corr.update_layout(
                         height=420,
                         margin=dict(t=20, b=10, l=10, r=10),
-                        xaxis_tickangle=-30
+                        xaxis_tickangle=-30,
+                        coloraxis_colorbar=dict(title="")
                     )
 
                     st.plotly_chart(fig_corr, use_container_width=True)
@@ -436,36 +447,182 @@ if st.session_state['recommendations'] is not None:
                     st.info("Insufficient numeric columns for correlation matrix.")
             else:
                 st.info("Global background dataset not loaded.")
+
+        # --- 3. Artist Connection Network (Sankey Diagram) ---
+        with col_network:
+            st.markdown("### 🕸️ Current Run: Artist Network")
+            st.caption(
+                "Tracing influence from your specific Seed Artists to the final output tracks, validating the anti-flood cap.")
+
+            # 1. Extract unique Seed Artists (Truncated for clean UI)
+            seed_artists_list = []
+            for song in st.session_state['seed_bank']:
+                for a in re.split(r'[;,]', str(song['artists'])):
+                    if a.strip() and a.strip() not in seed_artists_list:
+                        art_name = a.strip()
+                        seed_artists_list.append(art_name[:15] + "..." if len(art_name) > 15 else art_name)
+
+            # 2. Extract Output Artists and count tracks per artist (The Anti-Flood Proof)
+            output_artists_counts = {}
+            for i, row in display_df.iterrows():
+                primary_rec_artist = str(row['Artist(s)']).split(',')[0].strip()
+                art_name = primary_rec_artist[:15] + "..." if len(
+                    primary_rec_artist) > 15 else primary_rec_artist
+                output_artists_counts[art_name] = output_artists_counts.get(art_name, 0) + 1
+
+            rec_artists_list = list(output_artists_counts.keys())
+
+            # 3. Build Nodes (Left: Seeds, Middle: Engine, Right: Outputs)
+            engine_node_idx = len(seed_artists_list)
+
+            # MAKE LABELS BOLD FOR EXTRA CLARITY
+            raw_nodes = seed_artists_list + ["⚙️ Hybrid Engine"] + rec_artists_list
+            all_nodes = [f"<b>{name}</b>" for name in raw_nodes]
+
+            node_colors = ['#0068c9'] * len(seed_artists_list) + ['#333333'] + ['#ff4b4b'] * len(
+                rec_artists_list)
+
+            links_source = []
+            links_target = []
+            links_value = []
+
+            # Flow 1: Seeds -> Engine
+            for s_idx in range(len(seed_artists_list)):
+                links_source.append(s_idx)
+                links_target.append(engine_node_idx)
+                links_value.append(1)
+
+                # Flow 2: Engine -> Output Artists
+            for r_idx, r_artist in enumerate(rec_artists_list):
+                links_source.append(engine_node_idx)
+                links_target.append(engine_node_idx + 1 + r_idx)
+                links_value.append(output_artists_counts[r_artist])
+
+            # 4. Render the Figure
+            fig_network = go.Figure(data=[go.Sankey(
+                node=dict(
+                    pad=20,
+                    thickness=15,
+                    line=dict(color="black", width=0.5),
+                    label=all_nodes,
+                    color=node_colors
+                ),
+                link=dict(
+                    source=links_source,
+                    target=links_target,
+                    value=links_value,
+                    color="rgba(180, 180, 180, 0.3)"
+                )
+            )])
+
+            fig_network.update_layout(
+                height=420,
+                margin=dict(t=20, b=10, l=10, r=30),
+                font=dict(color="black", size=13, family="Arial, sans-serif"),
+                # THE MAGIC FIX: Force the background white so the shadow blends in perfectly
+                paper_bgcolor="#FFFFFF",
+                plot_bgcolor="#FFFFFF"
+            )
+
+            st.plotly_chart(fig_network, use_container_width=True, theme=None)    # TAB 3: DYNAMIC BACKOFF STRATEGY
+    # ==========================================
     # ==========================================
     # TAB 3: DYNAMIC BACKOFF STRATEGY
     # ==========================================
     with tab3:
-        st.markdown("### ⚙️ Dynamic Backoff & Weight Redistribution")
-        st.caption(
-            "Visualizing how the engine automatically re-allocates accumulator weights when collaborative playlist data is missing.")
 
-        col_backoff_info, col_weights_chart = st.columns([1, 1])
+        col_network, col_weights_chart = st.columns([1.2, 1])
 
-        with col_backoff_info:
-            st.markdown("### 🔄 Two-State Dynamic Weighting",
-                        help="Since seeds originate from the Kaggle dataset, they always have audio/artist metadata. The backoff strategy solely manages the presence or absence of collaborative playlist data.")
+        # --- COLUMN 1: Global Artist Community Graph (Offline Data) ---
+        with col_network:
+            st.markdown("### 🕸️ Offline Data: Global Community",
+                        help="Visualizing the strongest historical collaborations from the Kaggle dataset. Node size highlights 'Hub' artists with the most connections (Degree Centrality).")
 
-            st.markdown("""
-            * **State 1: Dual-Source Blend (Optimal)**  
-              *Condition:* Track data is found in both Kaggle and Playlist tables.  
-              *Weights:* Audio Features (`25%`), Artist Graph (`40%`), Shared Playlists (`35%`).
-            * **State 2: Kaggle-Only Fallback (`l3.empty`)**  
-              *Condition:* Track has no co-occurrence data in the playlist dataset.  
-              *Weights:* Playlist weight drops to **0%**, and weight is automatically redistributed evenly between Audio Features (`50%`) and Artist Collaborations (`50%`).
-            """)
+            import networkx as nx
+            import plotly.graph_objects as go
 
-            st.info(
-                "💡 **Architectural Win:** This guarantees robust scoring and zero division errors even for niche tracks lacking collaborative playlist history.")
+            G = nx.Graph()
 
+            # 1. Load the Pre-Computed Optimized Network CSV
+            try:
+                # Load the full CSV but only plot the top 400 strongest edges for browser performance
+                network_df = pd.read_csv("evaluation/global_artist_network.csv").head(400)
+                for _, row in network_df.iterrows():
+                    G.add_edge(row['source'], row['target'])
+            except FileNotFoundError:
+                st.warning("⚠️ Run `generate_artist_collabs_data.py` to generate the background community graph.")
+
+            # 2. Compute Physics Layout
+            pos = nx.spring_layout(G, seed=42, k=0.15, iterations=35)
+
+            traces = []
+
+            # 3. Build Plotly Edges (Uniform, clean thin lines)
+            edge_x = []
+            edge_y = []
+            for u, v in G.edges():
+                x0, y0 = pos[u]
+                x1, y1 = pos[v]
+                edge_x.extend([x0, x1, None])
+                edge_y.extend([y0, y1, None])
+
+            traces.append(go.Scatter(
+                x=edge_x, y=edge_y,
+                line=dict(width=0.5, color='rgba(180, 180, 180, 0.5)'),
+                hoverinfo='none',
+                mode='lines'
+            ))
+
+            # 4. Build Plotly Nodes (Sized dynamically by degree to show Hubs)
+            node_x, node_y, node_text, node_sizes = [], [], [], []
+
+            for node in G.nodes():
+                x, y = pos[node]
+                node_x.append(x)
+                node_y.append(y)
+                node_text.append(f"<b>{node}</b>")
+
+                # Dynamic sizing based on how many connections the artist has
+                deg = G.degree(node)
+                node_sizes.append(min(6 + (deg * 1.5), 24))
+
+            traces.append(go.Scatter(
+                x=node_x, y=node_y,
+                mode='markers',
+                text=node_text,
+                hoverinfo='text',
+                marker=dict(
+                    showscale=False,
+                    color='#0068c9',  # Clean, uniform aesthetic for offline data
+                    size=node_sizes,
+                    line=dict(width=1, color='rgba(50, 50, 50, 0.8)')
+                )
+            ))
+
+            # 5. Render the Figure
+            fig_comm = go.Figure(data=traces)
+            fig_comm.update_layout(
+                height=420,
+                margin=dict(t=20, b=10, l=10, r=10),
+                showlegend=False,
+                xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                paper_bgcolor="#FFFFFF",
+                plot_bgcolor="#FFFFFF",
+                font=dict(family="Arial, sans-serif")
+            )
+
+            st.plotly_chart(fig_comm, use_container_width=True, theme=None)        # --- COLUMN 2: Weight Redistribution Bar Chart ---
         with col_weights_chart:
-            st.markdown("### 📊 Layer Weight Shift Comparison",
-                        help="Compares weight allocation between normal operation and the fallback state.")
+            help_text = (
+                "**🔄 Two-State Dynamic Weighting**\n\n"
+                "• **State 1: Dual-Source Blend (Optimal):** Audio Features (25%), Artist Graph (40%), Shared Playlists (35%).\n\n"
+                "• **State 2: Kaggle-Only Fallback:** When a track lacks playlist co-occurrence data, the playlist weight drops to 0%. The engine redistributes weight evenly between Audio (50%) and the Artist Community Graph (50%).\n\n"
+                "*Architectural Win: This guarantees zero division errors and maintains robust scoring even for niche tracks.*\n\n"
+                "**Fallback Context:** When playlist data is sparse, the engine falls back heavily onto the Artist Collaboration Network (visualized on the left)."
+            )
 
+            st.markdown("### 📊 System Logic: Layer Weights", help=help_text)
             weight_data = pd.DataFrame({
                 'Layer': ['Audio Features (l1)', 'Artist Graph (l2)', 'Shared Playlists (l3)',
                           'Audio Features (l1)', 'Artist Graph (l2)', 'Shared Playlists (l3)'],
