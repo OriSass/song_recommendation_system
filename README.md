@@ -40,23 +40,48 @@ This project processes and synthesizes two distinct datasets, joined via a rigor
 
 ## 💻 Installation & Running the Dashboard
 
-We built a fully interactive Streamlit dashboard so users can input seed songs, generate recommendations, and visually audit the system's performance, PCA space, and layer weights in real-time.
+We built a fully interactive Streamlit dashboard so users can input seed songs, generate recommendations, and visually audit the system's performance in real-time.
 
 **1. Clone the repository and navigate to the folder:**
+```bash
+git clone https://github.com/YourUsername/Spotify-Hybrid-Recommender.git
+cd Spotify-Hybrid-Recommender
+```
 
-`git clone https://github.com/YourUsername/Spotify-Hybrid-Recommender.git`
+**2. Create and activate a virtual environment (Recommended):**
+*   **Windows:**
+    ```bash
+    python -m venv venv
+    venv\Scripts\activate
+    ```
+*   **Mac/Linux:**
+    ```bash
+    python3 -m venv venv
+    source venv/bin/activate
+    ```
 
-`cd Spotify-Hybrid-Recommender`
-
-**2. Download and Extract the Database:** 
-
+**3. Download and Extract the Database:**
 Download our compressed SQLite database from Google Drive: 👉 **[Click here to download the database](https://drive.google.com/file/d/1pKlbAaqCZv6zVNy9DehJL5dzf7HDO2tJ/view?usp=sharing)** 
-
 *(Note: Shared directly with dafna.shahaf@mail.huji.ac.il as per submission guidelines).*
 Once downloaded, extract the `.zip` file and place the resulting `.db` file directly into the root directory of this project.
 
-**3. Install dependencies:**
-`pip install -r requirements.txt`
+**4. Install dependencies:**
+```bash
+pip install -r requirements.txt
+```
 
-**4. Run the Streamlit App:**
-`streamlit run app.py`
+**5. Run the Streamlit App:**
+```bash
+streamlit run app.py
+```
+
+---
+
+## 🛠️ Repository Structure
+* `app.py`: The main Streamlit dashboard UI and visualization logic.
+* `HybridRecommender.py`: The core backend recommendation engine and SQL querying logic.
+* `requirements.txt`: Python package dependencies.
+* `/evaluation`: Contains lightweight CSVs (`global_audio_sample.csv`, `global_artist_network.csv`, `evaluation_results.csv`) used to render the offline benchmarking charts in the UI without heavy runtime computation.
+
+---
+*Created for academic purposes.*
