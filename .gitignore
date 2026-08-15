@@ -4,6 +4,7 @@
 *.json
 million_playlist_dataset/
 data/audio_features_dataset/
+db/
 
 # Python caches and environments
 __pycache__/

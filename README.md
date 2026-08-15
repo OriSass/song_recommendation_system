@@ -44,8 +44,8 @@ We built a fully interactive Streamlit dashboard so users can input seed songs, 
 
 **1. Clone the repository and navigate to the folder:**
 ```bash
-git clone https://github.com/YourUsername/Spotify-Hybrid-Recommender.git
-cd Spotify-Hybrid-Recommender
+git clone https://github.com/OriSass/song_recommendation_system.git
+cd song_recommendation_system
 ```
 
 **2. Create and activate a virtual environment (Recommended):**
