@@ -1,6 +1,6 @@
 # 🎵 Needle in a Data Haystack: Hybrid Spotify Recommendation Engine
 
-![Python](https://img.shields.io/badge/Python-3.8%2B-blue)
+![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
 ![Streamlit](https://img.shields.io/badge/Streamlit-App-FF4B4B)
 ![SQLite](https://img.shields.io/badge/SQLite-Database-003B57)
 
@@ -39,8 +39,10 @@ This project processes and synthesizes two distinct datasets, joined via a rigor
 ---
 
 ## 💻 Installation & Running the Dashboard
-
 We built a fully interactive Streamlit dashboard so users can input seed songs, generate recommendations, and visually audit the system's performance in real-time.
+
+### 📋 Prerequisites
+* **Python 3.10 or higher** (Highly recommended for optimal dependency installation speed and full Streamlit compatibility).
 
 **1. Clone the repository and navigate to the folder:**
 ```bash
@@ -74,7 +76,9 @@ pip install -r requirements.txt
 ```bash
 streamlit run app.py
 ```
-
+> **Note on first run:** Streamlit may prompt you for an email address in the terminal to receive updates. You can simply leave this blank and press **Enter** to bypass it and launch the app immediately.
+### ⏱️ Performance Note
+* **Initial Loading:** After launching the app and initiating the recommendation engine, please allow approximately **10 seconds** for the model to process the data, perform dimensionality reduction, and render all interactive visuals. A success notification will pop up on the screen once the loading is completely finished!
 ---
 
 ## 🛠️ Repository Structure
