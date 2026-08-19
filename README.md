@@ -13,8 +13,9 @@ Developed as the final project for **A Needle in a Data Haystack (67978)** at Th
 * **Ziv Ben Gigi** - ziv.bengigi@mail.huji.ac.il | 314750795
 * **Lian Nissim** - Lian.nissim@mail.huji.ac.il | 318804572
 
-## 🎥 Video Demonstration
-**Watch our system in action:** [INSERT YOUR YOUTUBE/DRIVE DEMO LINK HERE]
+## 🔗 Project Links
+* **🎥 Video Demonstration:** [Video Demo](https://drive.google.com/file/d/1b70qsboRo50LiNCKHredV1oKFaf_-8sg/view?usp=sharing)
+* **💻 Source Code:** [Github Repo](https://github.com/OriSass/song_recommendation_system)
 
 ---
 
@@ -86,6 +87,3 @@ streamlit run app.py
 * `HybridRecommender.py`: The core backend recommendation engine and SQL querying logic.
 * `requirements.txt`: Python package dependencies.
 * `/evaluation`: Contains lightweight CSVs (`global_audio_sample.csv`, `global_artist_network.csv`, `evaluation_results.csv`) used to render the offline benchmarking charts in the UI without heavy runtime computation.
-
----
-*Created for academic purposes.*

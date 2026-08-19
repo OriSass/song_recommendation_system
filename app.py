@@ -377,8 +377,8 @@ if st.session_state['recommendations'] is not None:
         with col_pca:
             st.markdown("### 🔭 Global vs. Current: PCA Space")
             st.caption(
-                "Mapping this session's tracks over the entire global dataset to prove"
-                " the engine explores niche boundaries.")
+                "Mapping this session's tracks over the entire global dataset to demonstrate"
+                " how the engine explores niche boundaries.")
 
             if not seed_feat_df.empty and not rec_feat_df.empty:
                 from sklearn.decomposition import PCA
@@ -455,7 +455,7 @@ if st.session_state['recommendations'] is not None:
                 st.markdown(
                     "**💡 Observation: Without normalization, the red recommendation dots cluster into a"
                     " dense center mass. When normalization is applied (near run button), the recommendations become less "
-                    "dense and much more scattered, proving the engine is successfully pulling niche tracks.**")
+                    "dense and much more scattered, demonstrating the engine is successfully pulling niche tracks.**")
             else:
                 st.info("Not enough audio data to generate the PCA space.")
 
@@ -464,7 +464,7 @@ if st.session_state['recommendations'] is not None:
 
             help_text = (
                 "This heatmap helps us spot redundant information by looking for large numbers (ignoring the positive/negative sign).\n\n"
-                "For example, the deep red **-0.73** between `acousticness` and `energy` proves a massive inverse relationship: highly acoustic songs are almost never highly energetic.\n\n"
+                "For example, the deep red **-0.73** between `acousticness` and `energy` highlights a massive inverse relationship: highly acoustic songs are almost never highly energetic.\n\n"
                 "Because features like these heavily overlap in the story they tell, we can safely use PCA to compress them into fewer dimensions without losing the track's core musical identity."
             )
 
@@ -601,7 +601,7 @@ if st.session_state['recommendations'] is not None:
         with col_weights_chart:
             help_text = (
                 "**🔄 Two-State Dynamic Weighting**\n\n"
-                "• **State 1: Dual-Source Blend (Optimal):** Audio Features (25%), Artist Graph (40%), Shared Playlists (35%).\n\n"
+                "• **State 1: Dual-Source Blend (Optimal):** Artist Graph (40% - primary preference predictor), Shared Playlists (35% - community validation), Audio Features (25% - acoustic vibe filter).\n\n"
                 "• **State 2: Kaggle-Only Fallback:** When a track lacks playlist co-occurrence data, the playlist weight drops to 0%. The engine redistributes weight evenly between Audio (50%) and the Artist Community Graph (50%).\n\n"
                 "*Architectural Win: This guarantees zero division errors and maintains robust scoring even for niche tracks.*\n\n"
                 "**Fallback Context:** When playlist data is sparse, the engine falls back heavily onto the Artist Collaboration Network (visualized on the left)."
